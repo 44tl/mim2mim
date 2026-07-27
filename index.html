@@ -64,7 +64,7 @@
       font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 17px; letter-spacing: 0.03em;
       padding: 15px 30px; border-radius: 3px; border: 1px solid var(--cyan);
       background: rgba(41, 242, 230, 0.06); color: var(--cyan); cursor: pointer;
-      transition: all 0.15s ease; text-transform: uppercase;
+      transition: all 0.15s ease; text-transform: uppercase; white-space: nowrap;
     }
     .btn:hover { background: rgba(41, 242, 230, 0.16); transform: translateY(-1px); }
     .btn:active { transform: translateY(0px) scale(0.98); }
@@ -82,18 +82,18 @@
     }
     .code-input:focus { outline: none; border-color: var(--cyan); }
     #join-panel { display: none; flex-direction: column; align-items: center; margin-top: 22px; gap: 10px; }
-    .hint { color: var(--ink-dim); font-size: 13px; margin-top: 8px; min-height: 18px; }
+    .hint { color: var(--ink-dim); font-size: 13px; margin-top: 8px; min-height: 18px; text-align: center; }
     .hint.err { color: var(--magenta); }
     .hint.ok { color: var(--cyan); }
     .panel {
       background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
-      border: 1px solid var(--line); border-radius: 6px; padding: 34px 40px; min-width: 340px;
+      border: 1px solid var(--line); border-radius: 6px; padding: 34px 40px; min-width: 340px; max-width: 95vw;
       display: flex; flex-direction: column; align-items: center; gap: 16px;
     }
     .code-display {
       font-family: 'Orbitron', sans-serif; font-size: 34px; font-weight: 800; letter-spacing: 0.14em;
       color: var(--cyan); padding: 14px 22px; border: 1px dashed var(--cyan-dim); border-radius: 4px;
-      cursor: pointer; user-select: all;
+      cursor: pointer; user-select: all; word-break: break-all; text-align: center;
     }
     .status-row { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; color: var(--ink-dim); }
     .dot { width: 9px; height: 9px; border-radius: 50%; background: #3a3f55; transition: background 0.2s; }
@@ -148,10 +148,20 @@
     .result-col.me .who { color: var(--cyan); }
     .result-col.opp .who { color: var(--magenta); }
     .result-val { font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: 19px; }
-    .results-actions { display: flex; gap: 14px; }
+    .results-actions { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
     ::selection { background: var(--cyan); color: #000; }
-    a { color: var(--cyan); }
-    .retry-text { color: var(--good); font-size: 14px; margin-top: 8px; }
+    .manual-connect-info { 
+      background: rgba(255,255,255,0.03); 
+      border: 1px solid var(--line); 
+      border-radius: 6px; 
+      padding: 20px; 
+      margin-top: 10px;
+      font-size: 14px;
+      line-height: 1.6;
+      max-width: 400px;
+      text-align: left;
+    }
+    .manual-connect-info strong { color: var(--cyan); }
   </style>
 </head>
 <body>
@@ -161,32 +171,39 @@
   <section id="screen-menu" class="screen active">
     <div class="eyebrow">Peer-to-peer · 1v1</div>
     <h1 class="title">SIGNAL DUEL</h1>
-    <p class="subtitle">Open a direct connection with a friend and race the same beat, note for note. Highest score at the end of the track wins.</p>
+    <p class="subtitle">Connect directly with a friend and race the same beat. Host creates a room, opponent joins with the code.</p>
     <div class="menu-actions">
-      <button class="btn" id="btn-host">Host Match</button>
-      <button class="btn magenta" id="btn-join-open">Join Match</button>
+      <button class="btn" id="btn-host">🎵 Host Match</button>
+      <button class="btn magenta" id="btn-join-open">🔗 Join Match</button>
     </div>
     <div id="join-panel">
       <div class="join-row">
-        <input class="code-input" id="join-code" maxlength="20" placeholder="PEER ID" autocomplete="off" spellcheck="false">
+        <input class="code-input" id="join-code" maxlength="30" placeholder="ROOM CODE" autocomplete="off" spellcheck="false">
         <button class="btn magenta" id="btn-join-go">Connect</button>
       </div>
-      <div class="hint">Both players must be using the same network or have UPnP enabled</div>
+      <div class="hint">Paste the room code shared by the host</div>
     </div>
     <div class="hint" id="menu-hint"></div>
+    <div class="manual-connect-info" style="display:none;" id="manual-info">
+      <strong>⚠️ Connection Troubles?</strong><br>
+      1. Both players must be on the same network, OR<br>
+      2. Use a VPN (like ZeroTier or Radmin), OR<br>
+      3. Host on a network with UPnP enabled<br>
+      <small style="color: var(--ink-dim);">PeerJS requires direct P2P connection</small>
+    </div>
   </section>
   <section id="screen-lobby" class="screen">
     <div class="eyebrow" id="lobby-role">Hosting</div>
     <div class="panel">
       <div id="lobby-host-block" style="display:none; flex-direction:column; align-items:center; gap:10px;">
-        <div class="hint">Share this ID with your opponent</div>
+        <div class="hint">📋 Share this code with your opponent</div>
         <div class="code-display" id="lobby-code" title="Click to copy">••••••</div>
-        <div class="hint" id="copy-hint">Click to copy ID</div>
+        <div class="hint" id="copy-hint">Click to copy code</div>
       </div>
-      <div class="status-row"><span class="dot" id="conn-dot"></span><span id="conn-status">Initializing connection...</span></div>
-      <button class="btn big" id="btn-start-match" disabled>Start Match</button>
+      <div class="status-row"><span class="dot" id="conn-dot"></span><span id="conn-status">Initializing...</span></div>
+      <button class="btn big" id="btn-start-match" disabled>▶ Start Match</button>
     </div>
-    <button class="btn ghost" id="btn-lobby-back" style="margin-top:20px;">Leave lobby</button>
+    <button class="btn ghost" id="btn-lobby-back" style="margin-top:20px;">← Leave lobby</button>
   </section>
   <section id="screen-countdown" class="screen">
     <div class="count-num" id="count-num">3</div>
@@ -198,20 +215,20 @@
         <div class="hud-name">You</div>
         <div class="hud-score" id="hud-my-score">0</div>
         <div class="healthbar"><div class="healthbar-fill" id="hud-my-health" style="width:100%"></div></div>
-        <div class="hud-combo"><span id="hud-my-combo">0</span>x combo · <span id="hud-my-acc">100</span>%</div>
+        <div class="hud-combo"><span id="hud-my-combo">0</span>x · <span id="hud-my-acc">100</span>%</div>
       </div>
       <div class="hud-panel opp">
         <div class="hud-name">Opponent</div>
         <div class="hud-score" id="hud-opp-score">0</div>
         <div class="healthbar"><div class="healthbar-fill" id="hud-opp-health" style="width:100%"></div></div>
-        <div class="hud-combo"><span id="hud-opp-combo">0</span>x combo · <span id="hud-opp-acc">100</span>%</div>
+        <div class="hud-combo"><span id="hud-opp-combo">0</span>x · <span id="hud-opp-acc">100</span>%</div>
       </div>
     </div>
     <div class="center-flash" id="center-flash"></div>
     <div id="playfield-wrap">
       <canvas id="playfield" width="900" height="600"></canvas>
     </div>
-    <div id="waiting-overlay" style="display:none;">Track complete — waiting for opponent to finish…</div>
+    <div id="waiting-overlay" style="display:none;">⌛ Waiting for opponent to finish...</div>
   </section>
   <section id="screen-results" class="screen">
     <div class="result-title" id="result-title">YOU WIN</div>
@@ -226,7 +243,7 @@
       <div class="col-label">
         <div>Score</div>
         <div>Accuracy</div>
-        <div>Max combo</div>
+        <div>Max Combo</div>
       </div>
       <div class="result-col opp">
         <div class="who">Opponent</div>
@@ -236,8 +253,8 @@
       </div>
     </div>
     <div class="results-actions">
-      <button class="btn" id="btn-rematch">Rematch</button>
-      <button class="btn ghost" id="btn-leave">Back to menu</button>
+      <button class="btn" id="btn-rematch">🔄 Rematch</button>
+      <button class="btn ghost" id="btn-leave">🏠 Back to menu</button>
     </div>
   </section>
 </div>
@@ -388,42 +405,49 @@
     
     function wireConnection(c) {
       conn = c;
-      updateConnectionStatus('Connection established, waiting for handshake...', 'connecting');
+      updateConnectionStatus('Connection established, handshaking...', 'connecting');
+      
+      let handshakeComplete = false;
       
       conn.on('open', () => {
         opponentConnected = true;
-        updateConnectionStatus('Opponent connected! Ready to start.', true);
+        handshakeComplete = true;
+        updateConnectionStatus('✅ Connected! Ready to play.', true);
         if (isHost) $('btn-start-match').disabled = false;
         if (connectionTimeout) clearTimeout(connectionTimeout);
+        if (!isHost) {
+          send({ type: 'joined' });
+        }
       });
       
       conn.on('data', handlePeerData);
       
       conn.on('close', () => {
         opponentConnected = false;
-        updateConnectionStatus('Connection closed by opponent', false);
+        updateConnectionStatus('❌ Connection closed', false);
         $('btn-start-match').disabled = true;
       });
       
       conn.on('error', (err) => {
         console.error('Connection error:', err);
         opponentConnected = false;
-        updateConnectionStatus('Connection failed: ' + (err.type || 'unknown error'), false);
+        updateConnectionStatus('❌ Connection failed: ' + (err.type || 'error'), false);
         $('btn-start-match').disabled = true;
       });
       
       connectionTimeout = setTimeout(() => {
-        if (!opponentConnected) {
-          updateConnectionStatus('Connection timed out. Check firewall/NAT settings.', false);
+        if (!handshakeComplete) {
+          updateConnectionStatus('⏰ Connection timed out. Check network/firewall.', false);
           $('btn-start-match').disabled = true;
+          $('manual-info').style.display = 'block';
         }
-      }, 15000);
+      }, 20000);
     }
     
     function onPeerDisconnected() {
       if (currentScreen() !== 'screen-menu') {
         opponentConnected = false;
-        updateConnectionStatus('Opponent disconnected', false);
+        updateConnectionStatus('❌ Opponent disconnected', false);
         $('btn-start-match').disabled = true;
       }
     }
@@ -444,30 +468,38 @@
     function hostMatch() {
       resetNetwork();
       isHost = true;
-      $('lobby-role').textContent = 'Hosting';
+      $('lobby-role').textContent = '🎵 Hosting Game';
       $('lobby-host-block').style.display = 'flex';
       $('lobby-code').textContent = 'Generating...';
       $('btn-start-match').disabled = true;
       $('btn-start-match').style.display = 'inline-block';
+      $('manual-info').style.display = 'none';
       showScreen('screen-lobby');
       
-      peer = new Peer({
-        debug: 1,
+      const peerConfig = {
+        debug: 2,
         config: {
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-          ]
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' }
+          ],
+          iceCandidatePoolSize: 2
         }
-      });
+      };
+      
+      peer = new Peer(peerConfig);
       
       peer.on('open', (id) => {
+        console.log('Host peer ID:', id);
         $('lobby-code').textContent = id;
-        updateConnectionStatus('Waiting for opponent... Share your ID: ' + id, 'connecting');
+        updateConnectionStatus('⏳ Waiting for opponent... Share code: ' + id, 'connecting');
       });
       
       peer.on('connection', (c) => {
+        console.log('Incoming connection from:', c.peer);
         if (conn && conn.open) { 
+          console.log('Already connected, rejecting');
           c.close(); 
           return; 
         }
@@ -476,38 +508,53 @@
       
       peer.on('error', (err) => {
         console.error('Peer error:', err);
-        updateConnectionStatus('Error: ' + (err.type || 'unknown') + '. Try refreshing.', false);
+        let msg = 'Error: ' + (err.type || 'unknown');
+        if (err.type === 'unavailable-id') {
+          msg = 'This ID is already taken. Try again.';
+        }
+        updateConnectionStatus('❌ ' + msg, false);
         $('btn-start-match').disabled = true;
       });
       
       peer.on('disconnected', () => {
-        updateConnectionStatus('Disconnected from signaling server. Reconnecting...', 'connecting');
-        peer.reconnect();
+        console.log('Peer disconnected from server, reconnecting...');
+        updateConnectionStatus('🔄 Reconnecting to server...', 'connecting');
+        if (peer && !peer.destroyed) {
+          peer.reconnect();
+        }
       });
     }
     
     function joinMatch(code) {
       resetNetwork();
       isHost = false;
-      $('lobby-role').textContent = 'Joining';
+      $('lobby-role').textContent = '🔗 Joining Game';
       $('lobby-host-block').style.display = 'none';
       $('btn-start-match').style.display = 'none';
+      $('manual-info').style.display = 'none';
       showScreen('screen-lobby');
       
-      updateConnectionStatus('Connecting to peer: ' + code + '...', 'connecting');
+      const cleanCode = code.trim();
+      updateConnectionStatus('🔍 Looking for host: ' + cleanCode + '...', 'connecting');
       
-      peer = new Peer({
-        debug: 1,
+      const peerConfig = {
+        debug: 2,
         config: {
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-          ]
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' }
+          ],
+          iceCandidatePoolSize: 2
         }
-      });
+      };
       
-      peer.on('open', () => {
-        const c = peer.connect(code.trim(), { 
+      peer = new Peer(peerConfig);
+      
+      peer.on('open', (myId) => {
+        console.log('Joiner peer ID:', myId, 'connecting to:', cleanCode);
+        
+        const c = peer.connect(cleanCode, { 
           reliable: true,
           serialization: 'json'
         });
@@ -515,23 +562,30 @@
         wireConnection(c);
         
         c.on('error', (err) => {
-          console.error('Join error:', err);
-          updateConnectionStatus('Could not connect to peer. Check the ID and try again.', false);
+          console.error('Join connection error:', err);
+          updateConnectionStatus('❌ Cannot reach host. Wrong code or host offline.', false);
+          $('manual-info').style.display = 'block';
         });
       });
       
       peer.on('error', (err) => {
         console.error('Peer error:', err);
         if (err.type === 'peer-unavailable') {
-          updateConnectionStatus('Peer ID not found. Make sure the host is still waiting.', false);
+          updateConnectionStatus('❌ Host not found. Check the code and try again.', false);
+        } else if (err.type === 'unavailable-id') {
+          updateConnectionStatus('❌ This ID is taken. Try again.', false);
         } else {
-          updateConnectionStatus('Error: ' + (err.type || 'unknown') + '. Try again.', false);
+          updateConnectionStatus('❌ Error: ' + (err.type || 'unknown'), false);
         }
+        $('manual-info').style.display = 'block';
       });
       
       peer.on('disconnected', () => {
-        updateConnectionStatus('Disconnected from server. Reconnecting...', 'connecting');
-        peer.reconnect();
+        console.log('Disconnected from server, reconnecting...');
+        updateConnectionStatus('🔄 Reconnecting...', 'connecting');
+        if (peer && !peer.destroyed) {
+          peer.reconnect();
+        }
       });
     }
     
@@ -825,17 +879,17 @@
       const titleEl = $('result-title');
       titleEl.classList.remove('win', 'lose', 'draw');
       if (outcome === 'win') { 
-        titleEl.textContent = 'YOU WIN'; 
+        titleEl.textContent = '🏆 YOU WIN!'; 
         titleEl.classList.add('win'); 
         $('result-sub').textContent = 'Stronger signal. Well played.'; 
       } else if (outcome === 'lose') { 
-        titleEl.textContent = 'YOU LOSE'; 
+        titleEl.textContent = '💔 YOU LOSE'; 
         titleEl.classList.add('lose'); 
         $('result-sub').textContent = 'Signal lost. Run it back?'; 
       } else { 
-        titleEl.textContent = 'DRAW'; 
+        titleEl.textContent = '🤝 DRAW'; 
         titleEl.classList.add('draw'); 
-        $('result-sub').textContent = 'Dead even.'; 
+        $('result-sub').textContent = 'Dead even. Rematch?'; 
       }
       
       $('res-my-score').textContent = localDone.score;
@@ -852,6 +906,9 @@
     function handlePeerData(msg) {
       if (!msg || !msg.type) return;
       switch (msg.type) {
+        case 'joined':
+          console.log('Opponent joined');
+          break;
         case 'beatmap':
           beginCountdownAndStart(msg.notes, msg.startAt);
           break;
@@ -884,7 +941,7 @@
       ensureAudio();
       const seed = Math.floor(Date.now() % 1e9) ^ 0x5bd1e995;
       const notes = generateBeatmap(seed);
-      const startAt = Date.now() + 5000;
+      const startAt = Date.now() + 4000;
       send({ type: 'beatmap', notes, startAt, seed });
       beginCountdownAndStart(notes, startAt);
     }
@@ -901,12 +958,13 @@
     $('btn-join-open').addEventListener('click', () => {
       $('join-panel').style.display = 'flex';
       $('join-code').focus();
+      $('manual-info').style.display = 'none';
     });
     
     $('btn-join-go').addEventListener('click', () => {
       const code = $('join-code').value.trim();
       if (!code) { 
-        $('menu-hint').textContent = 'Enter a Peer ID first.'; 
+        $('menu-hint').textContent = 'Please enter a room code first.'; 
         $('menu-hint').className = 'hint err'; 
         return; 
       }
@@ -922,10 +980,10 @@
       const text = $('lobby-code').textContent;
       if (text && text !== 'Generating...' && text !== '••••••') {
         navigator.clipboard.writeText(text).then(() => {
-          $('copy-hint').textContent = 'Copied! Share this with your friend.';
-          setTimeout(() => { $('copy-hint').textContent = 'Click to copy ID'; }, 2000);
+          $('copy-hint').textContent = '✅ Copied! Share with opponent.';
+          setTimeout(() => { $('copy-hint').textContent = 'Click to copy code'; }, 2000);
         }).catch(() => {
-          $('copy-hint').textContent = 'Could not copy. Please copy manually.';
+          $('copy-hint').textContent = '⚠️ Please copy manually';
         });
       }
     });
@@ -952,6 +1010,7 @@
       $('btn-start-match').style.display = 'inline-block';
       $('join-panel').style.display = 'none';
       $('join-code').value = '';
+      $('manual-info').style.display = 'none';
       showScreen('screen-menu');
     });
     
@@ -959,6 +1018,10 @@
     ctx = canvas.getContext('2d');
     attachInputHandlers();
     resizeCanvas();
+    
+    console.log('Signal Duel ready! Open two browser tabs to test.');
+    console.log('For real multiplayer, both players need direct connectivity.');
+    console.log('Try on same network first, or use VPN like ZeroTier for remote play.');
   })();
 </script>
 </body>

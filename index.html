@@ -98,6 +98,8 @@
     .status-row { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; color: var(--ink-dim); }
     .dot { width: 9px; height: 9px; border-radius: 50%; background: #3a3f55; transition: background 0.2s; }
     .dot.live { background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+    .dot.connecting { background: var(--good); box-shadow: 0 0 8px var(--good); animation: pulse 1s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
     .count-num {
       font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: clamp(90px, 20vw, 160px);
       color: var(--cyan); text-shadow: 0 0 40px rgba(41, 242, 230, 0.5);
@@ -149,6 +151,7 @@
     .results-actions { display: flex; gap: 14px; }
     ::selection { background: var(--cyan); color: #000; }
     a { color: var(--cyan); }
+    .retry-text { color: var(--good); font-size: 14px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -165,9 +168,10 @@
     </div>
     <div id="join-panel">
       <div class="join-row">
-        <input class="code-input" id="join-code" maxlength="10" placeholder="CODE" autocomplete="off" spellcheck="false">
+        <input class="code-input" id="join-code" maxlength="20" placeholder="PEER ID" autocomplete="off" spellcheck="false">
         <button class="btn magenta" id="btn-join-go">Connect</button>
       </div>
+      <div class="hint">Both players must be using the same network or have UPnP enabled</div>
     </div>
     <div class="hint" id="menu-hint"></div>
   </section>
@@ -175,11 +179,11 @@
     <div class="eyebrow" id="lobby-role">Hosting</div>
     <div class="panel">
       <div id="lobby-host-block" style="display:none; flex-direction:column; align-items:center; gap:10px;">
-        <div class="hint">Share this code with your opponent</div>
+        <div class="hint">Share this ID with your opponent</div>
         <div class="code-display" id="lobby-code" title="Click to copy">••••••</div>
-        <div class="hint" id="copy-hint">Click the code to copy it</div>
+        <div class="hint" id="copy-hint">Click to copy ID</div>
       </div>
-      <div class="status-row"><span class="dot" id="conn-dot"></span><span id="conn-status">Waiting for opponent to connect…</span></div>
+      <div class="status-row"><span class="dot" id="conn-dot"></span><span id="conn-status">Initializing connection...</span></div>
       <button class="btn big" id="btn-start-match" disabled>Start Match</button>
     </div>
     <button class="btn ghost" id="btn-lobby-back" style="margin-top:20px;">Leave lobby</button>
@@ -241,12 +245,16 @@
 <script>
   (function() {
     "use strict";
+    
     const $ = (id) => document.getElementById(id);
+    
     function showScreen(id) {
       document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
       $(id).classList.add('active');
     }
+    
     function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+    
     function mulberry32(seed) {
       let a = seed;
       return function() {
@@ -256,9 +264,11 @@
         return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
       };
     }
+    
     const FIELD_W = 900, FIELD_H = 600, PAD = 64;
     const BPM = 128;
     const BEAT_MS = 60000 / BPM;
+    
     function generateBeatmap(seed) {
       const rng = mulberry32(seed);
       const notes = [];
@@ -286,11 +296,13 @@
       }
       return notes;
     }
+    
     let actx = null;
     function ensureAudio() {
       if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
       if (actx.state === 'suspended') actx.resume();
     }
+    
     function blip(freq, when, dur, type, gain) {
       if (!actx) return;
       const osc = actx.createOscillator();
@@ -305,6 +317,7 @@
       osc.start(when);
       osc.stop(when + dur + 0.02);
     }
+    
     function kick(when) {
       if (!actx) return;
       const osc = actx.createOscillator();
@@ -319,6 +332,7 @@
       osc.start(when);
       osc.stop(when + 0.18);
     }
+    
     function hat(when) {
       if (!actx) return;
       const bufferSize = actx.sampleRate * 0.03;
@@ -337,6 +351,7 @@
       g.connect(actx.destination);
       src.start(when);
     }
+    
     function judgeSound(result) {
       if (!actx) return;
       const now = actx.currentTime;
@@ -345,8 +360,13 @@
       else if (result === 'ok') blip(440, now, 0.09, 'triangle', 0.10);
       else blip(120, now, 0.14, 'sawtooth', 0.12);
     }
+    
     let peer = null, conn = null, isHost = false, opponentConnected = false;
+    let connectionTimeout = null;
+    
     function resetNetwork() {
+      if (connectionTimeout) clearTimeout(connectionTimeout);
+      connectionTimeout = null;
       try { if (conn) conn.close(); } catch (e) {}
       try { if (peer) peer.destroy(); } catch (e) {}
       peer = null;
@@ -354,103 +374,203 @@
       isHost = false;
       opponentConnected = false;
     }
+    
+    function updateConnectionStatus(status, isGood) {
+      $('conn-status').textContent = status;
+      const dot = $('conn-dot');
+      dot.classList.remove('live', 'connecting');
+      if (isGood === true) {
+        dot.classList.add('live');
+      } else if (isGood === 'connecting') {
+        dot.classList.add('connecting');
+      }
+    }
+    
     function wireConnection(c) {
       conn = c;
+      updateConnectionStatus('Connection established, waiting for handshake...', 'connecting');
+      
       conn.on('open', () => {
         opponentConnected = true;
-        $('conn-dot').classList.add('live');
-        $('conn-status').textContent = 'Opponent connected';
+        updateConnectionStatus('Opponent connected! Ready to start.', true);
         if (isHost) $('btn-start-match').disabled = false;
+        if (connectionTimeout) clearTimeout(connectionTimeout);
       });
+      
       conn.on('data', handlePeerData);
-      conn.on('close', onPeerDisconnected);
-      conn.on('error', onPeerDisconnected);
+      
+      conn.on('close', () => {
+        opponentConnected = false;
+        updateConnectionStatus('Connection closed by opponent', false);
+        $('btn-start-match').disabled = true;
+      });
+      
+      conn.on('error', (err) => {
+        console.error('Connection error:', err);
+        opponentConnected = false;
+        updateConnectionStatus('Connection failed: ' + (err.type || 'unknown error'), false);
+        $('btn-start-match').disabled = true;
+      });
+      
+      connectionTimeout = setTimeout(() => {
+        if (!opponentConnected) {
+          updateConnectionStatus('Connection timed out. Check firewall/NAT settings.', false);
+          $('btn-start-match').disabled = true;
+        }
+      }, 15000);
     }
+    
     function onPeerDisconnected() {
       if (currentScreen() !== 'screen-menu') {
         opponentConnected = false;
-        $('conn-dot').classList.remove('live');
-        $('conn-status').textContent = 'Opponent disconnected';
+        updateConnectionStatus('Opponent disconnected', false);
         $('btn-start-match').disabled = true;
       }
     }
+    
     function currentScreen() {
       const el = document.querySelector('.screen.active');
       return el ? el.id : '';
     }
+    
     function send(msg) {
-      if (conn && conn.open) { try { conn.send(msg); } catch (e) {} }
+      if (conn && conn.open) { 
+        try { conn.send(msg); } catch (e) {
+          console.error('Send error:', e);
+        } 
+      }
     }
+    
     function hostMatch() {
       resetNetwork();
       isHost = true;
       $('lobby-role').textContent = 'Hosting';
       $('lobby-host-block').style.display = 'flex';
-      $('lobby-code').textContent = '…';
-      $('conn-status').textContent = 'Waiting for opponent to connect…';
+      $('lobby-code').textContent = 'Generating...';
       $('btn-start-match').disabled = true;
+      $('btn-start-match').style.display = 'inline-block';
       showScreen('screen-lobby');
-      peer = new Peer();
+      
+      peer = new Peer({
+        debug: 1,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        }
+      });
+      
       peer.on('open', (id) => {
         $('lobby-code').textContent = id;
+        updateConnectionStatus('Waiting for opponent... Share your ID: ' + id, 'connecting');
       });
+      
       peer.on('connection', (c) => {
-        if (conn && conn.open) { c.close(); return; }
+        if (conn && conn.open) { 
+          c.close(); 
+          return; 
+        }
         wireConnection(c);
       });
+      
       peer.on('error', (err) => {
-        $('conn-status').textContent = 'Connection error: ' + (err && err.type ? err.type : 'unknown');
+        console.error('Peer error:', err);
+        updateConnectionStatus('Error: ' + (err.type || 'unknown') + '. Try refreshing.', false);
+        $('btn-start-match').disabled = true;
+      });
+      
+      peer.on('disconnected', () => {
+        updateConnectionStatus('Disconnected from signaling server. Reconnecting...', 'connecting');
+        peer.reconnect();
       });
     }
+    
     function joinMatch(code) {
       resetNetwork();
       isHost = false;
       $('lobby-role').textContent = 'Joining';
       $('lobby-host-block').style.display = 'none';
-      $('conn-status').textContent = 'Connecting…';
       $('btn-start-match').style.display = 'none';
       showScreen('screen-lobby');
-      peer = new Peer();
-      peer.on('open', () => {
-        const c = peer.connect(code.trim(), { reliable: true });
-        wireConnection(c);
-        c.on('error', () => { $('conn-status').textContent = 'Could not reach that code.'; });
+      
+      updateConnectionStatus('Connecting to peer: ' + code + '...', 'connecting');
+      
+      peer = new Peer({
+        debug: 1,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        }
       });
+      
+      peer.on('open', () => {
+        const c = peer.connect(code.trim(), { 
+          reliable: true,
+          serialization: 'json'
+        });
+        
+        wireConnection(c);
+        
+        c.on('error', (err) => {
+          console.error('Join error:', err);
+          updateConnectionStatus('Could not connect to peer. Check the ID and try again.', false);
+        });
+      });
+      
       peer.on('error', (err) => {
-        $('conn-status').textContent = 'Connection error: ' + (err && err.type ? err.type : 'unknown');
+        console.error('Peer error:', err);
+        if (err.type === 'peer-unavailable') {
+          updateConnectionStatus('Peer ID not found. Make sure the host is still waiting.', false);
+        } else {
+          updateConnectionStatus('Error: ' + (err.type || 'unknown') + '. Try again.', false);
+        }
+      });
+      
+      peer.on('disconnected', () => {
+        updateConnectionStatus('Disconnected from server. Reconnecting...', 'connecting');
+        peer.reconnect();
       });
     }
+    
     const APPROACH_MS = 780;
     const WIN_PERFECT = 50, WIN_GOOD = 100, WIN_OK = 150;
     const NOTE_R = 26;
+    
     let canvas, ctx;
     let game = null;
     let localDone = null, remoteDone = null;
     let scheduledAudioIds = new Set();
+    
     function freshGameState(notes) {
       return {
         notes: notes.map(n => Object.assign({ judged: false, result: null }, n)),
         score: 0, combo: 0, maxCombo: 0,
         hitCounts: { perfect: 0, good: 0, ok: 0, miss: 0 },
         health: 100,
-        startPerf: 0, startDrift: 0,
+        startPerf: 0,
         finished: false,
         lastNoteTime: notes.length ? notes[notes.length - 1].time : 0,
         opp: { score: 0, combo: 0, maxCombo: 0, health: 100, acc: 100 }
       };
     }
+    
     function accuracyOf(hc) {
       const total = hc.perfect + hc.good + hc.ok + hc.miss;
       if (total === 0) return 100;
       const pts = hc.perfect * 300 + hc.good * 100 + hc.ok * 50;
       return Math.round((pts / (total * 300)) * 1000) / 10;
     }
+    
     function beginCountdownAndStart(notes, startAt) {
       localDone = null;
       remoteDone = null;
       scheduledAudioIds = new Set();
       game = freshGameState(notes);
       showScreen('screen-countdown');
+      
       function tick() {
         const msLeft = startAt - Date.now();
         if (msLeft <= 0) {
@@ -463,6 +583,7 @@
       }
       tick();
     }
+    
     function launchGame() {
       ensureAudio();
       showScreen('screen-game');
@@ -472,6 +593,7 @@
       updateHud();
       requestAnimationFrame(loop);
     }
+    
     function resizeCanvas() {
       canvas = $('playfield');
       ctx = canvas.getContext('2d');
@@ -481,10 +603,15 @@
       canvas.style.width = (FIELD_W * scale) + 'px';
       canvas.style.height = (FIELD_H * scale) + 'px';
     }
-    window.addEventListener('resize', () => { if (currentScreen() === 'screen-game') resizeCanvas(); });
+    
+    window.addEventListener('resize', () => { 
+      if (currentScreen() === 'screen-game') resizeCanvas(); 
+    });
+    
     function elapsedMs() {
       return performance.now() - game.startPerf;
     }
+    
     function loop() {
       if (!game || game.finished) return;
       const elapsed = elapsedMs();
@@ -494,6 +621,7 @@
       checkFinish(elapsed);
       if (!game.finished) requestAnimationFrame(loop);
     }
+    
     function autoMissCheck(elapsed) {
       for (const n of game.notes) {
         if (!n.judged && elapsed > n.time + WIN_OK) {
@@ -501,6 +629,7 @@
         }
       }
     }
+    
     function checkFinish(elapsed) {
       const allJudged = game.notes.every(n => n.judged);
       const failed = game.health <= 0;
@@ -508,6 +637,7 @@
         finishLocal(failed);
       }
     }
+    
     function scheduleAudio(elapsed) {
       if (!actx) return;
       const lookahead = 160;
@@ -522,6 +652,7 @@
         }
       }
     }
+    
     function drawFrame(elapsed) {
       ctx.clearRect(0, 0, FIELD_W, FIELD_H);
       ctx.save();
@@ -533,17 +664,20 @@
         ctx.stroke();
       }
       ctx.restore();
+      
       const visible = game.notes.filter(n => {
         if (n.judged && n.result !== 'miss') return false;
         const dt = n.time - elapsed;
         return dt < APPROACH_MS + 40 && dt > -WIN_OK - 40;
       }).sort((a, b) => (b.time - elapsed) - (a.time - elapsed));
+      
       for (const n of visible) {
         const dt = n.time - elapsed;
         const progress = clamp(1 - dt / APPROACH_MS, 0, 1);
         drawNote(n, progress, dt);
       }
     }
+    
     function drawNote(n, progress, dt) {
       const approachR = NOTE_R + (1 - progress) * NOTE_R * 3.2;
       ctx.beginPath();
@@ -563,6 +697,7 @@
         ctx.stroke();
       }
     }
+    
     function attachInputHandlers() {
       canvas.addEventListener('pointerdown', (ev) => {
         if (!game || game.finished) return;
@@ -571,6 +706,7 @@
         const sx = (ev.clientX - rect.left) * (FIELD_W / rect.width);
         const sy = (ev.clientY - rect.top) * (FIELD_H / rect.height);
         const elapsed = elapsedMs();
+        
         let best = null, bestDt = Infinity;
         for (const n of game.notes) {
           if (n.judged) continue;
@@ -580,15 +716,29 @@
           if (Math.sqrt(dx * dx + dy * dy) > NOTE_R * 1.4) continue;
           if (Math.abs(dt) < Math.abs(bestDt)) { best = n; bestDt = dt; }
         }
+        
         if (best) {
           const absdt = Math.abs(bestDt);
           const result = absdt <= WIN_PERFECT ? 'perfect' : absdt <= WIN_GOOD ? 'good' : 'ok';
           judgeNote(best, result, elapsed);
         }
       });
+      
+      canvas.addEventListener('touchstart', (ev) => {
+        ev.preventDefault();
+        const touch = ev.touches[0];
+        if (!touch) return;
+        const mouseEvent = new MouseEvent('pointerdown', {
+          clientX: touch.clientX,
+          clientY: touch.clientY
+        });
+        canvas.dispatchEvent(mouseEvent);
+      }, { passive: false });
     }
+    
     const RESULT_POINTS = { perfect: 300, good: 100, ok: 50, miss: 0 };
     const RESULT_HEALTH = { perfect: 1.2, good: 0.6, ok: 0.1, miss: -9 };
+    
     function judgeNote(note, result, elapsed) {
       note.judged = true;
       note.result = result;
@@ -602,14 +752,20 @@
       const mult = 1 + Math.min(game.combo, 100) / 100;
       game.score += Math.round(RESULT_POINTS[result] * mult);
       game.health = clamp(game.health + RESULT_HEALTH[result], 0, 100);
+      
       judgeSound(result);
       flashCenter(result);
       updateHud();
       send({
-        type: 'update', score: game.score, combo: game.combo, maxCombo: game.maxCombo,
-        health: game.health, acc: accuracyOf(game.hitCounts), t: elapsed
+        type: 'update', 
+        score: game.score, 
+        combo: game.combo, 
+        maxCombo: game.maxCombo,
+        health: game.health, 
+        acc: accuracyOf(game.hitCounts)
       });
     }
+    
     function flashCenter(result) {
       const el = $('center-flash');
       const label = result === 'perfect' ? 'PERFECT' : result === 'good' ? 'GOOD' : result === 'ok' ? 'OK' : 'MISS';
@@ -622,50 +778,77 @@
         { opacity: 0, transform: 'translate(-50%,-58%) scale(1)' }
       ], { duration: 420, easing: 'ease-out' });
     }
+    
     function updateHud() {
       $('hud-my-score').textContent = game.score;
       $('hud-my-combo').textContent = game.combo;
       $('hud-my-acc').textContent = accuracyOf(game.hitCounts);
       $('hud-my-health').style.width = game.health + '%';
+      
       $('hud-opp-score').textContent = game.opp.score;
       $('hud-opp-combo').textContent = game.opp.combo;
       $('hud-opp-acc').textContent = game.opp.acc;
       $('hud-opp-health').style.width = game.opp.health + '%';
     }
+    
     function finishLocal(failed) {
       if (game.finished) return;
       game.finished = true;
       localDone = {
-        score: game.score, maxCombo: game.maxCombo,
-        acc: accuracyOf(game.hitCounts), failed: !!failed
+        score: game.score, 
+        maxCombo: game.maxCombo,
+        acc: accuracyOf(game.hitCounts), 
+        failed: !!failed
       };
       $('waiting-overlay').style.display = 'block';
-      send({ type: 'done', score: localDone.score, maxCombo: localDone.maxCombo, acc: localDone.acc, failed: localDone.failed });
+      send({ 
+        type: 'done', 
+        score: localDone.score, 
+        maxCombo: localDone.maxCombo, 
+        acc: localDone.acc, 
+        failed: localDone.failed 
+      });
       maybeShowResults();
     }
+    
     function maybeShowResults() {
       if (localDone && remoteDone) showResults();
     }
+    
     function showResults() {
       let outcome;
       if (localDone.failed && !remoteDone.failed) outcome = 'lose';
       else if (remoteDone.failed && !localDone.failed) outcome = 'win';
       else if (localDone.score === remoteDone.score) outcome = 'draw';
       else outcome = localDone.score > remoteDone.score ? 'win' : 'lose';
+      
       const titleEl = $('result-title');
       titleEl.classList.remove('win', 'lose', 'draw');
-      if (outcome === 'win') { titleEl.textContent = 'YOU WIN'; titleEl.classList.add('win'); $('result-sub').textContent = 'Stronger signal. Well played.'; }
-      else if (outcome === 'lose') { titleEl.textContent = 'YOU LOSE'; titleEl.classList.add('lose'); $('result-sub').textContent = 'Signal lost. Run it back?'; }
-      else { titleEl.textContent = 'DRAW'; titleEl.classList.add('draw'); $('result-sub').textContent = 'Dead even.'; }
+      if (outcome === 'win') { 
+        titleEl.textContent = 'YOU WIN'; 
+        titleEl.classList.add('win'); 
+        $('result-sub').textContent = 'Stronger signal. Well played.'; 
+      } else if (outcome === 'lose') { 
+        titleEl.textContent = 'YOU LOSE'; 
+        titleEl.classList.add('lose'); 
+        $('result-sub').textContent = 'Signal lost. Run it back?'; 
+      } else { 
+        titleEl.textContent = 'DRAW'; 
+        titleEl.classList.add('draw'); 
+        $('result-sub').textContent = 'Dead even.'; 
+      }
+      
       $('res-my-score').textContent = localDone.score;
       $('res-my-acc').textContent = localDone.acc + '%';
       $('res-my-combo').textContent = localDone.maxCombo + 'x';
       $('res-opp-score').textContent = remoteDone.score;
       $('res-opp-acc').textContent = remoteDone.acc + '%';
       $('res-opp-combo').textContent = remoteDone.maxCombo + 'x';
+      
       $('btn-rematch').style.display = isHost ? 'inline-block' : 'none';
       showScreen('screen-results');
     }
+    
     function handlePeerData(msg) {
       if (!msg || !msg.type) return;
       switch (msg.type) {
@@ -683,7 +866,12 @@
           }
           break;
         case 'done':
-          remoteDone = { score: msg.score, maxCombo: msg.maxCombo, acc: msg.acc, failed: msg.failed };
+          remoteDone = { 
+            score: msg.score, 
+            maxCombo: msg.maxCombo, 
+            acc: msg.acc, 
+            failed: msg.failed 
+          };
           maybeShowResults();
           break;
         case 'leave':
@@ -691,6 +879,7 @@
           break;
       }
     }
+    
     function startMatchAsHost() {
       ensureAudio();
       const seed = Math.floor(Date.now() % 1e9) ^ 0x5bd1e995;
@@ -699,40 +888,64 @@
       send({ type: 'beatmap', notes, startAt, seed });
       beginCountdownAndStart(notes, startAt);
     }
-    $('btn-host').addEventListener('click', () => { ensureAudio(); hostMatch(); });
+    
+    document.addEventListener('click', () => {
+      ensureAudio();
+    }, { once: true });
+    
+    $('btn-host').addEventListener('click', () => { 
+      ensureAudio(); 
+      hostMatch(); 
+    });
+    
     $('btn-join-open').addEventListener('click', () => {
       $('join-panel').style.display = 'flex';
       $('join-code').focus();
     });
+    
     $('btn-join-go').addEventListener('click', () => {
       const code = $('join-code').value.trim();
-      if (!code) { $('menu-hint').textContent = 'Enter a code first.'; $('menu-hint').className = 'hint err'; return; }
+      if (!code) { 
+        $('menu-hint').textContent = 'Enter a Peer ID first.'; 
+        $('menu-hint').className = 'hint err'; 
+        return; 
+      }
       ensureAudio();
       joinMatch(code);
     });
-    $('join-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-join-go').click(); });
+    
+    $('join-code').addEventListener('keydown', (e) => { 
+      if (e.key === 'Enter') $('btn-join-go').click(); 
+    });
+    
     $('lobby-code').addEventListener('click', () => {
       const text = $('lobby-code').textContent;
-      if (text && text !== '…') {
+      if (text && text !== 'Generating...' && text !== '••••••') {
         navigator.clipboard.writeText(text).then(() => {
-          $('copy-hint').textContent = 'Copied!';
-          setTimeout(() => { $('copy-hint').textContent = 'Click the code to copy it'; }, 1500);
-        }).catch(() => {});
+          $('copy-hint').textContent = 'Copied! Share this with your friend.';
+          setTimeout(() => { $('copy-hint').textContent = 'Click to copy ID'; }, 2000);
+        }).catch(() => {
+          $('copy-hint').textContent = 'Could not copy. Please copy manually.';
+        });
       }
     });
+    
     $('btn-start-match').addEventListener('click', () => {
       if (!isHost || !opponentConnected) return;
       startMatchAsHost();
     });
+    
     $('btn-lobby-back').addEventListener('click', () => {
       send({ type: 'leave' });
       resetNetwork();
       $('btn-start-match').style.display = 'inline-block';
       showScreen('screen-menu');
     });
+    
     $('btn-rematch').addEventListener('click', () => {
-      if (isHost) startMatchAsHost();
+      if (isHost && opponentConnected) startMatchAsHost();
     });
+    
     $('btn-leave').addEventListener('click', () => {
       send({ type: 'leave' });
       resetNetwork();
@@ -741,6 +954,7 @@
       $('join-code').value = '';
       showScreen('screen-menu');
     });
+    
     canvas = $('playfield');
     ctx = canvas.getContext('2d');
     attachInputHandlers();
